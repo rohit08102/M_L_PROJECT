@@ -1,0 +1,143 @@
+---
+title: "Untitled1"
+author: "Rohit Kharat"
+date: "16/09/2020"
+output: word_document
+---
+
+## Introduction
+There is a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. The participants under consideration were asked to perform barbell lifts correctly and incorrectly in 5 different ways.
+
+The main purpose of the project is to predict the manner in which they did the exercise.
+
+The data for this project comes from accelerometers on the belt, forearm, arm, and dumbell of 6 participants and can be found [here](http://groupware.les.inf.puc-rio.br/har). 
+
+## Data Loading and Preprocessing
+
+First, let's load the required R packages.
+```{r echo = TRUE}
+suppressPackageStartupMessages({
+        library(caret)
+        library(randomForest)
+        library(corrplot)
+        library(randomForest)
+        library(rpart)
+        library(rpart.plot)
+        library(rattle)
+})
+```
+
+Now, let's download the training and testing data sets and read them into R.
+```{r echo = TRUE}
+URLtrain<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+download.file(URLtrain, "traindata.csv")
+traindata <- read.csv("traindata.csv")
+dim(traindata)
+URLtest<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(URLtest, "testdata.csv")
+testdata <- read.csv("testdata.csv")
+dim(testdata)
+table(traindata$classe)
+```
+As stated in the assignment instructions, the target variable is the **classe** variable.
+
+Then, let's do some preprocessing on the data sets. First, we will eliminate the variables that have variances close to zero in both data sets. After that, we will eliminate the columns containing the missing values. 
+```{r echo = TRUE}
+# Eliminating the variables with near zero variances
+NZV <- nearZeroVar(traindata)
+traindata <- traindata[ , -NZV]
+testdata <- testdata[ , -NZV]
+# Eliminating the variables with missing values
+train_wo_na <- traindata[ , colSums(is.na(traindata))==0]
+test_wo_na <- testdata[ , colSums(is.na(testdata))==0]
+# Eliminating the unnecessary columns
+unnecColumnsTrain <- c("X", "user_name", "raw_timestamp_part_1", 
+         "raw_timestamp_part_2", "cvtd_timestamp", "num_window")
+unnecColumnsTest <- c("X", "user_name", "raw_timestamp_part_1", 
+         "raw_timestamp_part_2", "cvtd_timestamp", "num_window", "problem_id")
+traindata_clean<-train_wo_na[,!(names(train_wo_na) %in% unnecColumnsTrain)]
+testdata_clean<-test_wo_na[,!(names(test_wo_na) %in% unnecColumnsTest)]
+dim(traindata_clean)
+dim(testdata_clean) 
+# the test data set will be used for applying the best model to 20 test cases.
+```
+
+Now, we need to split the training data into training data set and validation data set.
+```{r echo = TRUE}
+set.seed(09132020)
+split <- createDataPartition(y = traindata$classe, p = 0.7, list = FALSE)
+train_clean <- traindata_clean[split,] # the dataset for building the model
+validation_clean<-traindata_clean[-split,] #the dataset for validating the model
+```
+
+## Model Building
+Before we start building the models, let's first look at the correlation between the variables.
+```{r echo = TRUE}
+correlationMatrix <- cor(train_clean[, -53])
+corrplot(correlationMatrix, order = "FPC", method = "color", type = "lower", 
+         tl.cex = 0.8, tl.col = rgb(0, 0, 0))
+```
+In the graph above the correlated variables are presented in dark colors. Since the number of correlations is quite small the linear regression model will not be appropriate for this case.
+
+1. Now, let's first try the **Random Forest method**.
+```{r echo = TRUE}
+set.seed(448)
+RFcontrol <- trainControl(method = "cv", number = 3, verboseIter = FALSE)
+RFmodel<-train(classe ~ .,method = "rf",data = train_clean,trControl=RFcontrol)
+RFmodel$finalModel
+```
+
+Let's test the RF model using the **validation_clean** data set.
+```{r echo = TRUE}
+RFpredict <- predict(RFmodel, newdata = validation_clean)
+RFconfusionMatrix<-confusionMatrix(RFpredict,as.factor(validation_clean$classe))
+RFconfusionMatrix
+## Plotting the Confusion Matrix
+plot(RFconfusionMatrix$table, col = RFconfusionMatrix$byClass, 
+     main=paste("RF accuracy =",round(RFconfusionMatrix$overall['Accuracy'],2)))
+```
+
+**2**. Then, we will use the **Decision Tree method**.
+```{r echo = TRUE}
+set.seed(526)
+DTmodel <- rpart(classe ~ ., data=train_clean, method="class")
+prp(DTmodel)
+```
+
+Let's test the Decision Tree Model on our **validation_clean** data set.
+```{r echo = TRUE}
+DTpredict <- predict(DTmodel, newdata = validation_clean, type = "class")
+DTconfusionMatrix<-confusionMatrix(DTpredict,as.factor(validation_clean$classe))
+DTconfusionMatrix
+## Plotting the Confusion Matrix
+plot(DTconfusionMatrix$table, col = DTconfusionMatrix$byClass, 
+     main=paste("DT accuracy =",round(DTconfusionMatrix$overall['Accuracy'],2)))
+```
+
+**3**. Finally, let's consider the **Generalized Boosted Model**
+```{r echo = TRUE}
+set.seed(550)
+GBMcontrol <- trainControl(method = "repeatedcv", number = 5, repeats = 1)
+GBMmodel <- train(classe ~ ., data=train_clean, method = "gbm", 
+                  trControl = GBMcontrol, verbose = FALSE)
+GBMmodel$finalModel
+```
+
+Let's now predict using the **validation_clean** data set.
+```{r echo = TRUE}
+GBMpredict <- predict(GBMmodel, newdata = validation_clean)
+GBMconfusionMatrix<-confusionMatrix(GBMpredict,as.factor(validation_clean$classe))
+GBMconfusionMatrix
+## Plotting the Confusion Matrix
+plot(GBMconfusionMatrix$table, col = GBMconfusionMatrix$byClass, 
+     main=paste("GBM accuracy =",round(GBMconfusionMatrix$overall['Accuracy'],2)))
+```
+
+## Applying the best model to the test data set
+For the test the model we will use **testdata_clean** data set.
+
+Since the accuracy rate of the **Random Forest model** is the highest, this model will be applied to the 20 test cases.
+```{r echo = TRUE}
+TestPredict <- predict(RFmodel, newdata = testdata_clean)
+TestPredict
+```
